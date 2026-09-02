@@ -69,6 +69,8 @@ export default function MomPage() {
   const [loading, setLoading] = useState(false);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
+  const [followUpEntryId, setFollowUpEntryId] = useState(null);
+  const [starting, setStarting] = useState(false);
   const today = useRef(todayInShanghai()).current;
 
   // 专题访谈
@@ -116,11 +118,26 @@ export default function MomPage() {
     setReady(true);
   }
 
-  function startConversation() {
-    setConv([{ role: 'assistant', text: '今天店里有什么想说的？顾客、员工、进货、设备、账目，随便说说，没有也可以说"一切正常"。' }]);
+  async function startConversation() {
+    setStarting(true);
+    setError('');
+    let opener = '今天店里有什么想说的？顾客、员工、进货、设备、账目，随便说说，没有也可以说"一切正常"。';
+    let followUpId = null;
+    try {
+      const res = await fetch(`/api/chat?key=${encodeURIComponent(accessKey)}`);
+      if (res.ok) {
+        const data = await res.json();
+        opener = data.opener || opener;
+        followUpId = data.followUpEntryId || null;
+      }
+    } catch (e) {
+      // 拿不到开场白就退回默认那句，不影响开始记录
+    }
+    setFollowUpEntryId(followUpId);
+    setConv([{ role: 'assistant', text: opener }]);
     setDone(false);
     setTurnCount(0);
-    setError('');
+    setStarting(false);
   }
 
   async function send() {
@@ -141,7 +158,7 @@ export default function MomPage() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ key: accessKey, conv: newConv, turnCount: nextTurn }),
+        body: JSON.stringify({ key: accessKey, conv: newConv, turnCount: nextTurn, followUpEntryId }),
       });
       if (res.status === 401) {
         setError('无权限，链接可能不对');
@@ -273,8 +290,8 @@ export default function MomPage() {
                 {todaysEntries.map((e) => <Ticket key={e.id} e={e} />)}
               </>
             )}
-            <button className="plain" onClick={startConversation} style={{ marginTop: 10 }}>
-              {todaysEntries.length > 0 ? '+ 再记一条' : '开始记录今天'}
+            <button className="plain" disabled={starting} onClick={startConversation} style={{ marginTop: 10 }}>
+              {starting ? '...' : todaysEntries.length > 0 ? '+ 再记一条' : '开始记录今天'}
             </button>
           </>
         )}
@@ -318,7 +335,9 @@ export default function MomPage() {
             ) : (
               <>
                 <div className="loadingNote">已记录，盖章完成 ✓</div>
-                <button className="plain" onClick={startConversation} style={{ marginTop: 10 }}>+ 再记一条</button>
+                <button className="plain" disabled={starting} onClick={startConversation} style={{ marginTop: 10 }}>
+                  {starting ? '...' : '+ 再记一条'}
+                </button>
               </>
             )}
           </>

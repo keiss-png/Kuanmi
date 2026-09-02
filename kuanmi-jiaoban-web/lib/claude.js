@@ -31,3 +31,10 @@ export async function callClaude(system, userContent) {
 export function todayInShanghai() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
 }
+
+// 'YYYY-MM-DD' 格式的两个日期相差几天（b - a）
+export function daysBetween(dateA, dateB) {
+  const a = new Date(dateA + 'T00:00:00+08:00');
+  const b = new Date(dateB + 'T00:00:00+08:00');
+  return Math.round((b - a) / 86400000);
+}

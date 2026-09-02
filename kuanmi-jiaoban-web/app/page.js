@@ -6,6 +6,48 @@ function todayInShanghai() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
 }
 
+// 语音输入：安卓 Chrome 等支持 Web Speech API 的浏览器才会显示麦克风按钮，
+// iOS Safari 不支持这个 API，会自动隐藏（但系统输入法自带的语音听写不受影响）。
+function useSpeechToText(onResult) {
+  const [supported, setSupported] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const recognitionRef = useRef(null);
+
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'zh-CN';
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.onresult = (e) => {
+      let text = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) text += e.results[i][0].transcript;
+      }
+      if (text) onResult(text);
+    };
+    recognition.onend = () => setRecording(false);
+    recognition.onerror = () => setRecording(false);
+    recognitionRef.current = recognition;
+    setSupported(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function toggle() {
+    if (!recognitionRef.current) return;
+    if (recording) {
+      recognitionRef.current.stop();
+      setRecording(false);
+    } else {
+      recognitionRef.current.start();
+      setRecording(true);
+    }
+  }
+
+  return { supported, recording, toggle };
+}
+
 function Ticket({ e }) {
   const [expanded, setExpanded] = useState(false);
   return (
@@ -41,6 +83,9 @@ export default function MomPage() {
   const [interviewInput, setInterviewInput] = useState('');
   const [interviewLoading, setInterviewLoading] = useState(false);
   const [interviewError, setInterviewError] = useState('');
+
+  const dailySpeech = useSpeechToText((text) => setInput((prev) => (prev ? prev + text : text)));
+  const interviewSpeech = useSpeechToText((text) => setInterviewInput((prev) => (prev ? prev + text : text)));
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -257,6 +302,15 @@ export default function MomPage() {
                       }
                     }}
                   />
+                  {dailySpeech.supported && (
+                    <button
+                      type="button"
+                      className={`mic ${dailySpeech.recording ? 'recording' : ''}`}
+                      onClick={dailySpeech.toggle}
+                    >
+                      🎤
+                    </button>
+                  )}
                   <button className="send" disabled={loading} onClick={send}>{loading ? '...' : '发送'}</button>
                 </div>
                 {error && <div className="err">{error}</div>}
@@ -303,6 +357,15 @@ export default function MomPage() {
                       }
                     }}
                   />
+                  {interviewSpeech.supported && (
+                    <button
+                      type="button"
+                      className={`mic ${interviewSpeech.recording ? 'recording' : ''}`}
+                      onClick={interviewSpeech.toggle}
+                    >
+                      🎤
+                    </button>
+                  )}
                   <button className="send" disabled={interviewLoading} onClick={() => sendInterview(false)}>
                     {interviewLoading ? '...' : '发送'}
                   </button>

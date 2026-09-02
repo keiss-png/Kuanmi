@@ -3,8 +3,68 @@
 import { useEffect, useState } from 'react';
 
 const STATUS_LABEL = { pending: '待访谈', in_progress: '进行中', done: '已完成' };
+const CATEGORIES = ['顾客', '员工', '供应', '设备', '财务', '其他'];
+const SEVERITIES = ['低', '中', '高'];
 
-function ModuleRow({ m, sessions, onClick, expanded }) {
+function EntryTicket({ e, editing, onStartEdit, onCancelEdit, onSave, onDelete, saving }) {
+  const [draft, setDraft] = useState(null);
+
+  useEffect(() => {
+    if (editing) {
+      setDraft({
+        category: e.category,
+        severity: e.severity,
+        issue_summary: e.issue_summary,
+        raw_notes: e.raw_notes,
+      });
+    }
+  }, [editing, e]);
+
+  if (editing && draft) {
+    return (
+      <div className="ticket">
+        <div className="editRow">
+          <select className="editSelect" value={draft.category} onChange={(ev) => setDraft({ ...draft, category: ev.target.value })}>
+            {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <select className="editSelect" value={draft.severity} onChange={(ev) => setDraft({ ...draft, severity: ev.target.value })}>
+            {SEVERITIES.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+        <input
+          className="editArea"
+          value={draft.issue_summary}
+          onChange={(ev) => setDraft({ ...draft, issue_summary: ev.target.value })}
+          placeholder="一句话概括"
+        />
+        <textarea
+          className="editArea"
+          value={draft.raw_notes}
+          onChange={(ev) => setDraft({ ...draft, raw_notes: ev.target.value })}
+          placeholder="详细内容"
+        />
+        <div className="ticketActions">
+          <button className="linkBtn" disabled={saving} onClick={() => onSave(e.id, draft)}>{saving ? '保存中…' : '保存'}</button>
+          <button className="linkBtn" disabled={saving} onClick={onCancelEdit}>取消</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="ticket">
+      <div className="meta"><span>{e.date}</span><span className="cat">{e.category}</span></div>
+      <div className="summary">{e.issue_summary}</div>
+      <div className="raw">{e.raw_notes}</div>
+      <div className="ticketActions">
+        <button className="linkBtn" onClick={() => onStartEdit(e.id)}>编辑</button>
+        <button className="linkBtn danger" onClick={() => onDelete(e.id)}>删除</button>
+      </div>
+    </div>
+  );
+}
+
+function ModuleRow({ m, sessions, onClick, expanded, onDeleteSession, deletingId }) {
   const moduleSessions = sessions.filter((s) => s.module_id === m.id);
   return (
     <div>
@@ -26,6 +86,15 @@ function ModuleRow({ m, sessions, onClick, expanded }) {
                   <div className="a">{p.answer}</div>
                 </div>
               ))}
+              <div className="ticketActions">
+                <button
+                  className="linkBtn danger"
+                  disabled={deletingId === s.id}
+                  onClick={(ev) => { ev.stopPropagation(); onDeleteSession(s.id); }}
+                >
+                  {deletingId === s.id ? '删除中…' : '删除这次访谈'}
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -41,6 +110,8 @@ export default function ManagePage() {
   const [entries, setEntries] = useState([]);
   const [analysis, setAnalysis] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [editingEntryId, setEditingEntryId] = useState(null);
+  const [savingEntry, setSavingEntry] = useState(false);
 
   const [interviewModules, setInterviewModules] = useState([]);
   const [interviewSessions, setInterviewSessions] = useState([]);
@@ -48,6 +119,7 @@ export default function ManagePage() {
   const [interviewAnalyzing, setInterviewAnalyzing] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [expandedModuleId, setExpandedModuleId] = useState(null);
+  const [deletingSessionId, setDeletingSessionId] = useState(null);
 
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
@@ -119,6 +191,48 @@ export default function ManagePage() {
     setAnalyzing(false);
   }
 
+  async function deleteEntry(id) {
+    if (!window.confirm('确定删除这条记录吗？')) return;
+    setError('');
+    try {
+      const res = await fetch('/api/entries', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key: accessKey, id }),
+      });
+      if (!res.ok) {
+        setError('删除失败，稍后再试一次');
+        return;
+      }
+      setEntries((prev) => prev.filter((e) => e.id !== id));
+    } catch (e) {
+      setError('删除失败，稍后再试一次');
+    }
+  }
+
+  async function saveEntry(id, updates) {
+    setSavingEntry(true);
+    setError('');
+    try {
+      const res = await fetch('/api/entries', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key: accessKey, id, updates }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError('保存失败，稍后再试一次');
+        setSavingEntry(false);
+        return;
+      }
+      setEntries((prev) => prev.map((e) => (e.id === id ? data.entry : e)));
+      setEditingEntryId(null);
+    } catch (e) {
+      setError('保存失败，稍后再试一次');
+    }
+    setSavingEntry(false);
+  }
+
   async function triggerNextModule() {
     setTriggering(true);
     setError('');
@@ -141,6 +255,38 @@ export default function ManagePage() {
       setError('触发失败，稍后再试一次');
     }
     setTriggering(false);
+  }
+
+  async function deleteSession(id) {
+    if (!window.confirm('确定删除这次访谈记录吗？如果这是该模块唯一的一次访谈，模块会变回"待访谈"。')) return;
+    setDeletingSessionId(id);
+    setError('');
+    try {
+      const res = await fetch('/api/interview-sessions', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key: accessKey, id }),
+      });
+      if (!res.ok) {
+        setError('删除失败，稍后再试一次');
+        setDeletingSessionId(null);
+        return;
+      }
+      const deleted = interviewSessions.find((s) => s.id === id);
+      const remaining = interviewSessions.filter((s) => s.id !== id);
+      setInterviewSessions(remaining);
+      if (deleted) {
+        const stillHasOthers = remaining.some((s) => s.module_id === deleted.module_id);
+        if (!stillHasOthers) {
+          setInterviewModules((prev) =>
+            prev.map((m) => (m.id === deleted.module_id ? { ...m, status: 'pending', last_session_date: null } : m))
+          );
+        }
+      }
+    } catch (e) {
+      setError('删除失败，稍后再试一次');
+    }
+    setDeletingSessionId(null);
   }
 
   async function runInterviewAnalyze() {
@@ -240,11 +386,16 @@ export default function ManagePage() {
               <div className="empty">还没有记录，等妈妈那边记几天就有了。</div>
             ) : (
               entries.map((e) => (
-                <div className="ticket" key={e.id}>
-                  <div className="meta"><span>{e.date}</span><span className="cat">{e.category}</span></div>
-                  <div className="summary">{e.issue_summary}</div>
-                  <div className="raw">{e.raw_notes}</div>
-                </div>
+                <EntryTicket
+                  key={e.id}
+                  e={e}
+                  editing={editingEntryId === e.id}
+                  saving={savingEntry}
+                  onStartEdit={setEditingEntryId}
+                  onCancelEdit={() => setEditingEntryId(null)}
+                  onSave={saveEntry}
+                  onDelete={deleteEntry}
+                />
               ))
             )}
           </>
@@ -260,6 +411,8 @@ export default function ManagePage() {
                 sessions={interviewSessions}
                 expanded={expandedModuleId === m.id}
                 onClick={() => setExpandedModuleId(expandedModuleId === m.id ? null : m.id)}
+                onDeleteSession={deleteSession}
+                deletingId={deletingSessionId}
               />
             ))}
             <button className="plain" onClick={triggerNextModule} disabled={triggering} style={{ marginTop: 10 }}>

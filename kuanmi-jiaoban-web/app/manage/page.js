@@ -6,7 +6,7 @@ const STATUS_LABEL = { pending: '待访谈', in_progress: '进行中', done: '�
 const CATEGORIES = ['顾客', '员工', '供应', '设备', '财务', '其他'];
 const SEVERITIES = ['低', '中', '高'];
 
-function EntryTicket({ e, editing, onStartEdit, onCancelEdit, onSave, onDelete, saving }) {
+function EntryTicket({ e, editing, onStartEdit, onCancelEdit, onSave, saving, confirmingDelete, onRequestDelete, onConfirmDelete, onCancelDelete }) {
   const [draft, setDraft] = useState(null);
 
   useEffect(() => {
@@ -57,14 +57,24 @@ function EntryTicket({ e, editing, onStartEdit, onCancelEdit, onSave, onDelete, 
       <div className="summary">{e.issue_summary}</div>
       <div className="raw">{e.raw_notes}</div>
       <div className="ticketActions">
-        <button className="linkBtn" onClick={() => onStartEdit(e.id)}>编辑</button>
-        <button className="linkBtn danger" onClick={() => onDelete(e.id)}>删除</button>
+        {confirmingDelete ? (
+          <>
+            <span style={{ fontSize: 12, color: 'var(--stamp)' }}>确定删除这条记录？</span>
+            <button className="linkBtn danger" onClick={onConfirmDelete}>确定</button>
+            <button className="linkBtn" onClick={onCancelDelete}>取消</button>
+          </>
+        ) : (
+          <>
+            <button className="linkBtn" onClick={() => onStartEdit(e.id)}>编辑</button>
+            <button className="linkBtn danger" onClick={onRequestDelete}>删除</button>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-function ModuleRow({ m, sessions, onClick, expanded, onDeleteSession, deletingId }) {
+function ModuleRow({ m, sessions, onClick, expanded, onRequestDeleteSession, onConfirmDeleteSession, onCancelDeleteSession, confirmingSessionId, deletingId }) {
   const moduleSessions = sessions.filter((s) => s.module_id === m.id);
   return (
     <div>
@@ -87,13 +97,22 @@ function ModuleRow({ m, sessions, onClick, expanded, onDeleteSession, deletingId
                 </div>
               ))}
               <div className="ticketActions">
-                <button
-                  className="linkBtn danger"
-                  disabled={deletingId === s.id}
-                  onClick={(ev) => { ev.stopPropagation(); onDeleteSession(s.id); }}
-                >
-                  {deletingId === s.id ? '删除中…' : '删除这次访谈'}
-                </button>
+                {confirmingSessionId === s.id ? (
+                  <>
+                    <span style={{ fontSize: 12, color: 'var(--stamp)' }}>确定删除这次访谈？</span>
+                    <button className="linkBtn danger" onClick={(ev) => { ev.stopPropagation(); onConfirmDeleteSession(s.id); }}>
+                      {deletingId === s.id ? '删除中…' : '确定'}
+                    </button>
+                    <button className="linkBtn" onClick={(ev) => { ev.stopPropagation(); onCancelDeleteSession(); }}>取消</button>
+                  </>
+                ) : (
+                  <button
+                    className="linkBtn danger"
+                    onClick={(ev) => { ev.stopPropagation(); onRequestDeleteSession(s.id); }}
+                  >
+                    删除这次访谈
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -112,6 +131,7 @@ export default function ManagePage() {
   const [analyzing, setAnalyzing] = useState(false);
   const [editingEntryId, setEditingEntryId] = useState(null);
   const [savingEntry, setSavingEntry] = useState(false);
+  const [confirmingEntryId, setConfirmingEntryId] = useState(null);
 
   const [interviewModules, setInterviewModules] = useState([]);
   const [interviewSessions, setInterviewSessions] = useState([]);
@@ -120,6 +140,7 @@ export default function ManagePage() {
   const [triggering, setTriggering] = useState(false);
   const [expandedModuleId, setExpandedModuleId] = useState(null);
   const [deletingSessionId, setDeletingSessionId] = useState(null);
+  const [confirmingSessionId, setConfirmingSessionId] = useState(null);
 
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
@@ -192,7 +213,7 @@ export default function ManagePage() {
   }
 
   async function deleteEntry(id) {
-    if (!window.confirm('确定删除这条记录吗？')) return;
+    setConfirmingEntryId(null);
     setError('');
     try {
       const res = await fetch('/api/entries', {
@@ -258,7 +279,7 @@ export default function ManagePage() {
   }
 
   async function deleteSession(id) {
-    if (!window.confirm('确定删除这次访谈记录吗？如果这是该模块唯一的一次访谈，模块会变回"待访谈"。')) return;
+    setConfirmingSessionId(null);
     setDeletingSessionId(id);
     setError('');
     try {
@@ -394,7 +415,10 @@ export default function ManagePage() {
                   onStartEdit={setEditingEntryId}
                   onCancelEdit={() => setEditingEntryId(null)}
                   onSave={saveEntry}
-                  onDelete={deleteEntry}
+                  confirmingDelete={confirmingEntryId === e.id}
+                  onRequestDelete={() => setConfirmingEntryId(e.id)}
+                  onConfirmDelete={() => deleteEntry(e.id)}
+                  onCancelDelete={() => setConfirmingEntryId(null)}
                 />
               ))
             )}
@@ -411,7 +435,10 @@ export default function ManagePage() {
                 sessions={interviewSessions}
                 expanded={expandedModuleId === m.id}
                 onClick={() => setExpandedModuleId(expandedModuleId === m.id ? null : m.id)}
-                onDeleteSession={deleteSession}
+                confirmingSessionId={confirmingSessionId}
+                onRequestDeleteSession={setConfirmingSessionId}
+                onConfirmDeleteSession={deleteSession}
+                onCancelDeleteSession={() => setConfirmingSessionId(null)}
                 deletingId={deletingSessionId}
               />
             ))}

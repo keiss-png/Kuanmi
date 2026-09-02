@@ -97,6 +97,7 @@ ${followUpEntryId ? '这次对话一开始是在追问她之前提到过、可�
   try {
     result = await callClaude(sys, historyText);
   } catch (e) {
+    console.error('chat route: callClaude failed, falling back:', e.message);
     result = null;
   }
 

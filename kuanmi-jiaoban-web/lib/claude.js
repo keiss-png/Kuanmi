@@ -1,4 +1,4 @@
-export async function callClaude(system, userContent) {
+async function callClaudeOnce(system, userContent) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -26,6 +26,21 @@ export async function callClaude(system, userContent) {
   let raw = textBlock.text.trim();
   raw = raw.replace(/^```json/, '').replace(/^```/, '').replace(/```$/, '').trim();
   return JSON.parse(raw);
+}
+
+// 网络抖动或者模型偶尔没按格式回复都可能导致单次调用失败，
+// 重试一次再放弃，避免一次瞬时故障就把整段对话草草结束。
+export async function callClaude(system, userContent, maxAttempts = 2) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await callClaudeOnce(system, userContent);
+    } catch (e) {
+      lastError = e;
+      console.error(`callClaude attempt ${attempt}/${maxAttempts} failed:`, e.message);
+    }
+  }
+  throw lastError;
 }
 
 export function todayInShanghai() {

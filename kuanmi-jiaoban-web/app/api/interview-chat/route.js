@@ -84,6 +84,7 @@ ${forceFinish ? '5. 整场已经聊了很多轮了，不管当前方向问没问
   try {
     result = await callClaude(sys, historyText);
   } catch (e) {
+    console.error('interview-chat route: callClaude failed, falling back:', e.message);
     result = null;
   }
 

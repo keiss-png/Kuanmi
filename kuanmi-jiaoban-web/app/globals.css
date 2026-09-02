@@ -95,3 +95,26 @@ html, body {
 .sectionLabel { font-size: 12px; color: var(--chalk-dim); font-family: 'Noto Sans Mono', monospace; letter-spacing: 1px; margin: 18px 0 8px; text-transform: uppercase; }
 .sopSteps { margin: 8px 0 0; padding-left: 18px; }
 .sopSteps li { margin-bottom: 4px; font-size: 13.5px; }
+
+.tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.tab { background: transparent; border: 1px solid var(--line); color: var(--chalk-dim); border-radius: 8px; padding: 6px 14px; font-size: 13px; cursor: pointer; font-family: 'Noto Sans SC', sans-serif; }
+.tab:hover { border-color: var(--scallion); color: var(--chalk); }
+.tab.active { border-color: var(--scallion); color: var(--chalk); background: var(--panel); }
+
+.moduleRow { display: flex; justify-content: space-between; align-items: center; background: var(--panel); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; cursor: pointer; }
+.moduleRow .name { font-size: 14px; }
+.moduleRow .date { font-size: 11px; color: var(--chalk-dim); font-family: 'Noto Sans Mono', monospace; margin-left: 8px; }
+
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 500; font-family: 'Noto Sans Mono', monospace; }
+.badge.pending { background: var(--line); color: var(--chalk-dim); }
+.badge.in_progress { background: var(--stamp-dim); color: #f6e9e5; }
+.badge.done { background: var(--scallion-dim); color: #eaf0dd; }
+
+.qaBlock { margin-top: 10px; }
+.qaBlock:first-child { margin-top: 0; }
+.qaBlock .q { font-size: 13px; color: #6b6353; margin-top: 8px; }
+.qaBlock .a { font-size: 14px; margin-top: 2px; }
+
+.interviewPrompt { margin-top: 18px; padding-top: 16px; border-top: 1px dashed var(--line); }
+.interviewPrompt .ask { font-size: 14px; margin-bottom: 10px; color: var(--chalk); }
+.interviewRow { display: flex; gap: 8px; }

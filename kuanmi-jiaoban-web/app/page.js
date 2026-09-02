@@ -29,6 +29,19 @@ export default function MomPage() {
   const [error, setError] = useState('');
   const today = useRef(todayInShanghai()).current;
 
+  // 专题访谈
+  const [interviewModules, setInterviewModules] = useState([]);
+  const [interviewSkipped, setInterviewSkipped] = useState(false);
+  const [interviewActive, setInterviewActive] = useState(false);
+  const [interviewDone, setInterviewDone] = useState(false);
+  const [interviewConv, setInterviewConv] = useState([]);
+  const [interviewGroupIndex, setInterviewGroupIndex] = useState(0);
+  const [interviewTurnCount, setInterviewTurnCount] = useState(0);
+  const [interviewGroupTurnCount, setInterviewGroupTurnCount] = useState(0);
+  const [interviewInput, setInterviewInput] = useState('');
+  const [interviewLoading, setInterviewLoading] = useState(false);
+  const [interviewError, setInterviewError] = useState('');
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const k = params.get('key') || '';
@@ -47,6 +60,11 @@ export default function MomPage() {
       }
       const data = await res.json();
       setEntries(data.entries || []);
+      const imRes = await fetch(`/api/interview-modules?key=${encodeURIComponent(k)}`);
+      if (imRes.ok) {
+        const imData = await imRes.json();
+        setInterviewModules(imData.modules || []);
+      }
     } catch (e) {
       setError('网络出了点问题，刷新页面再试试');
     }
@@ -98,12 +116,100 @@ export default function MomPage() {
     setLoading(false);
   }
 
+  const interviewModule = interviewModules.find((m) => m.status === 'in_progress');
+
+  function startInterview() {
+    if (!interviewModule) return;
+    const firstGroup = interviewModule.groups[0];
+    setInterviewGroupIndex(0);
+    setInterviewTurnCount(0);
+    setInterviewGroupTurnCount(0);
+    setInterviewConv([
+      { role: 'assistant', text: `另外想跟你聊聊"${interviewModule.name}"。${firstGroup.questions[0]}` },
+    ]);
+    setInterviewActive(true);
+    setInterviewDone(false);
+    setInterviewError('');
+  }
+
+  async function sendInterview(earlyExit) {
+    if (!interviewModule) return;
+    let newConv = interviewConv;
+    if (!earlyExit) {
+      const val = interviewInput.trim();
+      if (!val) {
+        setInterviewError('先打几个字再发送');
+        return;
+      }
+      newConv = [...interviewConv, { role: 'user', text: val }];
+      setInterviewConv(newConv);
+      setInterviewInput('');
+    }
+    setInterviewError('');
+    setInterviewLoading(true);
+    const nextTurn = turnCountOrZero(interviewTurnCount, earlyExit);
+    const nextGroupTurn = turnCountOrZero(interviewGroupTurnCount, earlyExit);
+    if (!earlyExit) {
+      setInterviewTurnCount(nextTurn);
+      setInterviewGroupTurnCount(nextGroupTurn);
+    }
+
+    try {
+      const res = await fetch('/api/interview-chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          key: accessKey,
+          module_id: interviewModule.id,
+          conv: newConv,
+          turnCount: nextTurn,
+          groupIndex: interviewGroupIndex,
+          groupTurnCount: nextGroupTurn,
+          earlyExit: !!earlyExit,
+        }),
+      });
+      if (res.status === 401) {
+        setInterviewError('无权限，链接可能不对');
+        setInterviewLoading(false);
+        return;
+      }
+      const data = await res.json();
+      if (data.action === 'ask') {
+        setInterviewConv([...newConv, { role: 'assistant', text: data.question }]);
+      } else if (data.action === 'next_group') {
+        setInterviewGroupIndex(data.groupIndex);
+        setInterviewGroupTurnCount(0);
+        const label = data.group ? `${data.group}。` : '';
+        setInterviewConv([...newConv, { role: 'assistant', text: label + data.question }]);
+      } else {
+        setInterviewDone(true);
+        setInterviewModules((prev) =>
+          prev.map((m) => (m.id === interviewModule.id ? { ...m, status: 'done' } : m))
+        );
+      }
+    } catch (e) {
+      setInterviewError('网络出了点问题，再试一次');
+    }
+    setInterviewLoading(false);
+  }
+
+  function turnCountOrZero(count, earlyExit) {
+    return earlyExit ? count : count + 1;
+  }
+
   if (!ready) return <div className="loading">加载中…</div>;
   if (!accessKey || (error && entries.length === 0 && conv.length === 0)) {
     return <div className="empty">{error || '链接不对，找宽米管理员要一下正确链接。'}</div>;
   }
 
   const todaysEntries = entries.filter((e) => e.date === today);
+  const finishedTodaysCheckIn = done || (conv.length === 0 && todaysEntries.length > 0);
+  const showInterviewBlock =
+    interviewModule &&
+    !interviewSkipped &&
+    !interviewActive &&
+    !interviewDone &&
+    finishedTodaysCheckIn;
 
   return (
     <div className="app">
@@ -162,6 +268,59 @@ export default function MomPage() {
               </>
             )}
           </>
+        )}
+
+        {showInterviewBlock && (
+          <div className="interviewPrompt">
+            <div className="ask">另外想跟你聊聊"{interviewModule.name}"，方便的话说两句？</div>
+            <div className="interviewRow">
+              <button className="plain" onClick={startInterview}>现在聊两句</button>
+              <button className="plain" onClick={() => setInterviewSkipped(true)}>下次再说</button>
+            </div>
+          </div>
+        )}
+
+        {interviewActive && (
+          <div className="interviewPrompt">
+            <div className="chat">
+              {interviewConv.map((m, i) => (
+                <div key={i} className={`bubble ${m.role === 'assistant' ? 'ai' : 'user'}`}>{m.text}</div>
+              ))}
+            </div>
+
+            {!interviewDone ? (
+              <>
+                <div className="inputRow">
+                  <textarea
+                    className="inp"
+                    value={interviewInput}
+                    onChange={(e) => setInterviewInput(e.target.value)}
+                    placeholder="随便打几个字就行……"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendInterview(false);
+                      }
+                    }}
+                  />
+                  <button className="send" disabled={interviewLoading} onClick={() => sendInterview(false)}>
+                    {interviewLoading ? '...' : '发送'}
+                  </button>
+                </div>
+                <button
+                  className="plain"
+                  disabled={interviewLoading}
+                  onClick={() => sendInterview(true)}
+                  style={{ marginTop: 10 }}
+                >
+                  先聊到这，下次再继续
+                </button>
+                {interviewError && <div className="err">{interviewError}</div>}
+              </>
+            ) : (
+              <div className="loadingNote">这个话题聊完了，谢谢你 ✓</div>
+            )}
+          </div>
         )}
       </div>
     </div>

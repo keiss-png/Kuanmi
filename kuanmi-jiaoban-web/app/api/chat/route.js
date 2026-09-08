@@ -6,6 +6,15 @@ const FOLLOW_UP_WINDOW_DAYS = 3; // 一件事几天内没标记"已解决"，还
 const DEFAULT_OPENER = '今天店里有什么想说的？顾客、员工、进货、设备、账目，随便说说，没有也可以说"一切正常"。';
 const SEVERITY_RANK = { 高: 3, 中: 2, 低: 1 };
 const TOPICS = ['顾客', '员工', '供应', '设备', '财务', '其他'];
+const MIN_NORMAL_AUDIT_TURNS = 3;
+const NORMAL_PHRASES = ['一切正常', '都正常', '正常', '没事', '没啥事', '没有', '没什么', '没问题', '还好', '挺好'];
+const AUDIT_QUESTIONS = [
+  { topic: '顾客', question: '今天客流跟平时比，是偏忙、偏闲，还是差不多？' },
+  { topic: '员工', question: '今天员工到岗和状态怎么样，有没有迟到、请假或者配合不顺的？' },
+  { topic: '供应', question: '今天进货和库存有没有什么小变化，比如少了、贵了、送晚了，或者哪样快不够了？' },
+  { topic: '设备', question: '今天设备、冰箱、灶、收银这些有没有哪里不太对劲？' },
+  { topic: '财务', question: '今天收银、团购核销、现金和扫码到账这些，对起来都没问题吗？' },
+];
 
 async function loadEntries() {
   const raw = await redis.lrange('entries', 0, -1);
@@ -44,6 +53,28 @@ async function markEntryResolved(id) {
   if (index === -1) return;
   const entry = typeof raw[index] === 'string' ? JSON.parse(raw[index]) : raw[index];
   await redis.lset('entries', index, JSON.stringify({ ...entry, resolved: true }));
+}
+
+function isVagueNormalText(text) {
+  const compact = String(text || '').replace(/\s+/g, '');
+  if (!compact) return false;
+  return NORMAL_PHRASES.some((phrase) => compact.includes(phrase));
+}
+
+function hasSpecificOperationalSignal(text) {
+  const compact = String(text || '');
+  return /投诉|迟到|请假|缺|坏|漏|错|慢|贵|涨价|退款|对不上|没到|晚到|不够|剩|扔|客人|员工|供应商|冰箱|灶|收银|团购|现金/.test(compact);
+}
+
+function shouldForceNormalAudit(userTexts, turnCount) {
+  if ((turnCount || 0) >= MIN_NORMAL_AUDIT_TURNS) return false;
+  if (userTexts.some(hasSpecificOperationalSignal)) return false;
+  return userTexts.length > 0 && userTexts.every(isVagueNormalText);
+}
+
+function pickAuditQuestion(coveredTopics) {
+  const covered = new Set(coveredTopics || []);
+  return AUDIT_QUESTIONS.find((q) => !covered.has(q.topic)) || AUDIT_QUESTIONS[0];
 }
 
 export async function GET(req) {
@@ -115,12 +146,22 @@ ${followUpEntryId ? '这次对话一开始是在追问她之前提到过、可�
   const nextCoveredTopics = Array.isArray(result?.covered_topics)
     ? result.covered_topics.filter((t) => TOPICS.includes(t))
     : normalizedCoveredTopics;
+  const userTexts = conv.filter((m) => m.role === 'user').map((m) => m.text);
+
+  if (!forceFinish && shouldForceNormalAudit(userTexts, turnCount)) {
+    const nextAudit = pickAuditQuestion(nextCoveredTopics);
+    const forcedCoveredTopics = Array.from(new Set([...nextCoveredTopics, nextAudit.topic]));
+    return Response.json({
+      action: 'ask',
+      question: nextAudit.question,
+      covered_topics: forcedCoveredTopics,
+    });
+  }
 
   if (result && result.action === 'ask' && !forceFinish) {
     return Response.json({ action: 'ask', question: result.question, covered_topics: nextCoveredTopics });
   }
 
-  const userTexts = conv.filter((m) => m.role === 'user').map((m) => m.text);
   const fallbackSummary = {
     category: '其他',
     issue_summary: userTexts.join(' / '),

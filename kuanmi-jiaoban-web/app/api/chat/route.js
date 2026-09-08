@@ -1,7 +1,6 @@
 import { redis } from '../../../lib/redis';
 import { callClaude, todayInShanghai, daysBetween } from '../../../lib/claude';
 
-const MAX_TURNS = 7;
 const FOLLOW_UP_WINDOW_DAYS = 3; // 一件事几天内没标记"已解决"，还值得每天追问一下
 const DEFAULT_OPENER = '今天店里有什么想说的？顾客、员工、进货、设备、账目，随便说说，没有也可以说"一切正常"。';
 const SEVERITY_RANK = { 高: 3, 中: 2, 低: 1 };
@@ -66,15 +65,16 @@ function hasSpecificOperationalSignal(text) {
   return /投诉|迟到|请假|缺|坏|漏|错|慢|贵|涨价|退款|对不上|没到|晚到|不够|剩|扔|客人|员工|供应商|冰箱|灶|收银|团购|现金/.test(compact);
 }
 
-function shouldForceNormalAudit(userTexts, turnCount) {
+function shouldForceNormalAudit(userTexts, turnCount, manualFinish) {
+  if (manualFinish) return false;
   if ((turnCount || 0) >= MIN_NORMAL_AUDIT_TURNS) return false;
   if (userTexts.some(hasSpecificOperationalSignal)) return false;
   return userTexts.length > 0 && userTexts.every(isVagueNormalText);
 }
 
-function pickAuditQuestion(coveredTopics) {
+function pickAuditQuestion(coveredTopics, turnCount) {
   const covered = new Set(coveredTopics || []);
-  return AUDIT_QUESTIONS.find((q) => !covered.has(q.topic)) || AUDIT_QUESTIONS[0];
+  return AUDIT_QUESTIONS.find((q) => !covered.has(q.topic)) || AUDIT_QUESTIONS[(turnCount || 0) % AUDIT_QUESTIONS.length];
 }
 
 export async function GET(req) {
@@ -102,7 +102,7 @@ export async function GET(req) {
 
 export async function POST(req) {
   const body = await req.json();
-  const { key, conv, turnCount, followUpEntryId, coveredTopics } = body || {};
+  const { key, conv, turnCount, followUpEntryId, coveredTopics, manualFinish } = body || {};
 
   if (!key || key !== process.env.ACCESS_KEY) {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -111,7 +111,6 @@ export async function POST(req) {
     return Response.json({ error: 'bad_request' }, { status: 400 });
   }
 
-  const forceFinish = (turnCount || 0) >= MAX_TURNS;
   const normalizedCoveredTopics = Array.isArray(coveredTopics)
     ? coveredTopics.filter((t) => TOPICS.includes(t))
     : [];
@@ -128,7 +127,7 @@ ${followUpEntryId ? '这次对话一开始是在追问她之前提到过、可�
 3. 如果她说"一切正常"，至少再从两个具体方向核对，不要马上结束。可以先问最容易回答的问题，比如"今天比平时忙还是闲？"再根据回答继续追。
 4. 每次只问一个具体、简短的问题。
 5. 维护 covered_topics：只包含已经实际聊到的方向，取值只能是 顾客、员工、供应、设备、财务、其他。下一轮尽量不要重复扫已经覆盖过的方向，除非她刚提到的内容值得继续深挖。
-6. ${forceFinish ? '这是最后一轮，无论如何都必须结束（action=done），不能再问问题。' : '如果核心方向都已经问过、她也确实没什么可补充的了，就该结束；否则换一个还没覆盖的方向继续问。'}
+6. ${manualFinish ? '老板已经主动结束这次交班，这次必须输出 action=done，把对话内容整理成记录。' : '老板还没有主动结束。无论你觉得是否已经问够，都不要输出 action=done，只能继续 action=ask；如果核心方向都问过了，就开始第二轮更细地追问：例外情况、谁负责、怎么判断、怎么补救。'}
 只输出严格的 JSON，不要有任何其他文字、不要markdown代码块标记：
 {"action":"ask","question":"...","covered_topics":["顾客","员工"]} 或者
 {"action":"done","covered_topics":["顾客","员工"],"summary":{"category":"顾客|员工|供应|设备|财务|其他","issue_summary":"一句话概括核心内容，如果确实一切正常就写'一切正常'","severity":"低|中|高","recurring_guess":true或false,"resolved":${followUpEntryId ? 'true或false，判断这次追问的旧问题现在是不是已经解决了' : 'null，这次不是在追问旧问题'},"needs_follow_up":true或false,"follow_up_after_days":1到3之间的数字或null,"tags":["更细的标签，比如上菜慢、员工迟到、冰箱故障"],"raw_notes":"把老板说的内容整合成完整、具体的一段话，尽量包含时间、涉及对象、经过、处理方式等细节"}}`;
@@ -148,8 +147,8 @@ ${followUpEntryId ? '这次对话一开始是在追问她之前提到过、可�
     : normalizedCoveredTopics;
   const userTexts = conv.filter((m) => m.role === 'user').map((m) => m.text);
 
-  if (!forceFinish && shouldForceNormalAudit(userTexts, turnCount)) {
-    const nextAudit = pickAuditQuestion(nextCoveredTopics);
+  if (shouldForceNormalAudit(userTexts, turnCount, manualFinish)) {
+    const nextAudit = pickAuditQuestion(nextCoveredTopics, turnCount);
     const forcedCoveredTopics = Array.from(new Set([...nextCoveredTopics, nextAudit.topic]));
     return Response.json({
       action: 'ask',
@@ -158,8 +157,18 @@ ${followUpEntryId ? '这次对话一开始是在追问她之前提到过、可�
     });
   }
 
-  if (result && result.action === 'ask' && !forceFinish) {
+  if (!manualFinish && result && result.action === 'ask' && result.question) {
     return Response.json({ action: 'ask', question: result.question, covered_topics: nextCoveredTopics });
+  }
+
+  if (!manualFinish) {
+    const nextAudit = pickAuditQuestion(nextCoveredTopics, turnCount);
+    const forcedCoveredTopics = Array.from(new Set([...nextCoveredTopics, nextAudit.topic]));
+    return Response.json({
+      action: 'ask',
+      question: nextAudit.question,
+      covered_topics: forcedCoveredTopics,
+    });
   }
 
   const fallbackSummary = {

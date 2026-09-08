@@ -144,25 +144,32 @@ export default function MomPage() {
     setStarting(false);
   }
 
-  async function send() {
+  async function send(manualFinish = false) {
     const val = input.trim();
-    if (!val) {
+    if (!val && !manualFinish) {
       setError('先打几个字再发送');
       return;
     }
     setError('');
-    const newConv = [...conv, { role: 'user', text: val }];
+    const newConv = val ? [...conv, { role: 'user', text: val }] : conv;
     setConv(newConv);
     setInput('');
     setLoading(true);
-    const nextTurn = turnCount + 1;
+    const nextTurn = manualFinish ? turnCount : turnCount + 1;
     setTurnCount(nextTurn);
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ key: accessKey, conv: newConv, turnCount: nextTurn, followUpEntryId, coveredTopics }),
+        body: JSON.stringify({
+          key: accessKey,
+          conv: newConv,
+          turnCount: nextTurn,
+          followUpEntryId,
+          coveredTopics,
+          manualFinish,
+        }),
       });
       if (res.status === 401) {
         setError('无权限，链接可能不对');
@@ -178,6 +185,9 @@ export default function MomPage() {
       } else {
         setDone(true);
         setEntries((prev) => [data.entry, ...prev]);
+        if (!interviewActive && !interviewDone) {
+          await startNextInterviewIfAvailable();
+        }
       }
     } catch (e) {
       setError('网络出了点问题，再试一次');
@@ -214,26 +224,53 @@ export default function MomPage() {
 
   const interviewModule = interviewModules.find((m) => m.status === 'in_progress');
 
-  function startInterview() {
-    if (!interviewModule) return;
-    const progress = interviewModule.progress;
+  function startInterview(moduleOverride) {
+    const activeModule = moduleOverride || interviewModule;
+    if (!activeModule) return;
+    const progress = activeModule.progress;
     if (progress && Array.isArray(progress.conv) && progress.conv.length > 0) {
       setInterviewGroupIndex(progress.groupIndex || 0);
       setInterviewTurnCount(progress.turnCount || 0);
       setInterviewGroupTurnCount(progress.groupTurnCount || 0);
       setInterviewConv(progress.conv);
     } else {
-      const firstGroup = interviewModule.groups[0];
+      const firstGroup = activeModule.groups[0];
       setInterviewGroupIndex(0);
       setInterviewTurnCount(0);
       setInterviewGroupTurnCount(0);
       setInterviewConv([
-        { role: 'assistant', text: `另外想跟你聊聊"${interviewModule.name}"。${firstGroup.questions[0]}` },
+        { role: 'assistant', text: `另外想跟你聊聊"${activeModule.name}"。${firstGroup.questions[0]}` },
       ]);
     }
     setInterviewActive(true);
     setInterviewDone(false);
     setInterviewError('');
+  }
+
+  async function startNextInterviewIfAvailable() {
+    const current = interviewModules.find((m) => m.status === 'in_progress');
+    if (current) {
+      startInterview(current);
+      return;
+    }
+
+    const pending = interviewModules.find((m) => m.status === 'pending');
+    if (!pending) return;
+
+    try {
+      const res = await fetch('/api/interview-modules', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key: accessKey }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const next = { ...pending, ...data.module, status: 'in_progress' };
+      setInterviewModules((prev) => prev.map((m) => (m.id === next.id ? next : m)));
+      startInterview(next);
+    } catch (e) {
+      // 专题没接上不影响交班保存；下次打开还会继续尝试。
+    }
   }
 
   async function sendInterview(earlyExit) {
@@ -401,7 +438,7 @@ export default function MomPage() {
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
-                        send();
+                        send(false);
                       }
                     }}
                   />
@@ -414,13 +451,16 @@ export default function MomPage() {
                       🎤
                     </button>
                   )}
-                  <button className="send" disabled={loading} onClick={send}>{loading ? '...' : '发送'}</button>
+                  <button className="send" disabled={loading} onClick={() => send(false)}>{loading ? '...' : '发送'}</button>
                 </div>
+                <button className="plain" disabled={loading} onClick={() => send(true)} style={{ marginTop: 10 }}>
+                  结束并保存
+                </button>
                 {error && <div className="err">{error}</div>}
               </>
             ) : (
               <>
-                <div className="loadingNote">已记录，盖章完成 ✓</div>
+                <div className="loadingNote">{interviewActive ? '已记录，继续聊专题 ✓' : '已记录，盖章完成 ✓'}</div>
                 <button className="plain" disabled={starting} onClick={startConversation} style={{ marginTop: 10 }}>
                   {starting ? '...' : '+ 再记一条'}
                 </button>
@@ -433,7 +473,7 @@ export default function MomPage() {
           <div className="interviewPrompt">
             <div className="ask">另外想跟你聊聊"{interviewModule.name}"，方便的话说两句？</div>
             <div className="interviewRow">
-              <button className="plain" onClick={startInterview}>现在聊两句</button>
+              <button className="plain" onClick={() => startInterview()}>现在聊两句</button>
               <button className="plain" onClick={() => setInterviewSkipped(true)}>下次再说</button>
             </div>
           </div>

@@ -125,6 +125,13 @@ html, body {
 .linkBtn:hover { color: #2a2620; }
 .linkBtn:disabled { opacity: 0.6; cursor: default; }
 .linkBtn.danger { color: var(--stamp); }
+.transcript { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--paper-line); }
+.sectionLabel.compact { margin: 0 0 8px; color: #8a7f65; }
+.empty.mini { padding: 8px 0 0; color: #8a7f65; text-align: left; }
+.transcriptLine { margin-top: 8px; }
+.transcriptLine span { display: block; font-size: 11px; color: #8a7f65; font-family: 'Noto Sans Mono', monospace; }
+.transcriptLine p { margin: 2px 0 0; font-size: 13px; line-height: 1.6; color: #2a2620; }
+.transcriptLine.ai p { color: #5f573f; }
 
 .editRow { display: flex; gap: 8px; margin-bottom: 8px; }
 .editSelect { padding: 6px 8px; border: 1px solid var(--paper-line); border-radius: 4px; font-size: 12.5px; background: #fff; color: #2a2620; font-family: 'Noto Sans SC', sans-serif; }

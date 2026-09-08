@@ -6,7 +6,22 @@ const STATUS_LABEL = { pending: '待访谈', in_progress: '进行中', done: '�
 const CATEGORIES = ['顾客', '员工', '供应', '设备', '财务', '其他'];
 const SEVERITIES = ['低', '中', '高'];
 
-function EntryTicket({ e, editing, onStartEdit, onCancelEdit, onSave, saving, confirmingDelete, onRequestDelete, onConfirmDelete, onCancelDelete }) {
+function EntryTicket({
+  e,
+  editing,
+  onStartEdit,
+  onCancelEdit,
+  onSave,
+  saving,
+  confirmingDelete,
+  onRequestDelete,
+  onConfirmDelete,
+  onCancelDelete,
+  transcript,
+  transcriptOpen,
+  transcriptLoading,
+  onToggleTranscript,
+}) {
   const [draft, setDraft] = useState(null);
 
   useEffect(() => {
@@ -66,10 +81,30 @@ function EntryTicket({ e, editing, onStartEdit, onCancelEdit, onSave, saving, co
         ) : (
           <>
             <button className="linkBtn" onClick={() => onStartEdit(e.id)}>编辑</button>
+            <button className="linkBtn" onClick={() => onToggleTranscript(e.id)}>
+              {transcriptLoading ? '读取中…' : transcriptOpen ? '收起对话' : '查看对话'}
+            </button>
             <button className="linkBtn danger" onClick={onRequestDelete}>删除</button>
           </>
         )}
       </div>
+      {transcriptOpen && (
+        <div className="transcript">
+          {transcript?.expired ? (
+            <div className="empty mini">完整对话只保留 48 小时，这条已经过期了。</div>
+          ) : (
+            <>
+              <div className="sectionLabel compact">完整对话</div>
+              {(transcript?.conv || []).map((m, i) => (
+                <div key={i} className={`transcriptLine ${m.role === 'assistant' ? 'ai' : 'user'}`}>
+                  <span>{m.role === 'assistant' ? '交班本' : '妈妈'}</span>
+                  <p>{m.text}</p>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -133,6 +168,9 @@ export default function ManagePage() {
   const [editingEntryId, setEditingEntryId] = useState(null);
   const [savingEntry, setSavingEntry] = useState(false);
   const [confirmingEntryId, setConfirmingEntryId] = useState(null);
+  const [openTranscriptId, setOpenTranscriptId] = useState(null);
+  const [transcriptsById, setTranscriptsById] = useState({});
+  const [transcriptLoadingId, setTranscriptLoadingId] = useState(null);
 
   const [interviewModules, setInterviewModules] = useState([]);
   const [interviewSessions, setInterviewSessions] = useState([]);
@@ -253,6 +291,37 @@ export default function ManagePage() {
       setError('保存失败，稍后再试一次');
     }
     setSavingEntry(false);
+  }
+
+  async function toggleTranscript(id) {
+    if (openTranscriptId === id) {
+      setOpenTranscriptId(null);
+      return;
+    }
+
+    setOpenTranscriptId(id);
+    if (transcriptsById[id]) return;
+
+    setTranscriptLoadingId(id);
+    setError('');
+    try {
+      const res = await fetch(`/api/entry-transcript?key=${encodeURIComponent(accessKey)}&id=${encodeURIComponent(id)}`);
+      if (res.status === 404) {
+        setTranscriptsById((prev) => ({ ...prev, [id]: { expired: true } }));
+        setTranscriptLoadingId(null);
+        return;
+      }
+      if (!res.ok) {
+        setError('读取完整对话失败，稍后再试一次');
+        setTranscriptLoadingId(null);
+        return;
+      }
+      const data = await res.json();
+      setTranscriptsById((prev) => ({ ...prev, [id]: data.transcript }));
+    } catch (e) {
+      setError('读取完整对话失败，稍后再试一次');
+    }
+    setTranscriptLoadingId(null);
   }
 
   async function triggerNextModule() {
@@ -420,6 +489,10 @@ export default function ManagePage() {
                   onRequestDelete={() => setConfirmingEntryId(e.id)}
                   onConfirmDelete={() => deleteEntry(e.id)}
                   onCancelDelete={() => setConfirmingEntryId(null)}
+                  transcript={transcriptsById[e.id]}
+                  transcriptOpen={openTranscriptId === e.id}
+                  transcriptLoading={transcriptLoadingId === e.id}
+                  onToggleTranscript={toggleTranscript}
                 />
               ))
             )}

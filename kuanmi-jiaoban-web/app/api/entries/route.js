@@ -33,6 +33,7 @@ export async function DELETE(req) {
   if (!rawEntry) return Response.json({ error: 'not_found' }, { status: 404 });
 
   await redis.lrem('entries', 1, rawEntry);
+  await redis.del(`entry_transcript:${id}`);
   return Response.json({ ok: true });
 }
 

@@ -6,6 +6,7 @@ const DEFAULT_OPENER = '今天店里有什么想说的？顾客、员工、进�
 const SEVERITY_RANK = { 高: 3, 中: 2, 低: 1 };
 const TOPICS = ['顾客', '员工', '供应', '设备', '财务', '其他'];
 const MIN_NORMAL_AUDIT_TURNS = 3;
+const TRANSCRIPT_TTL_SECONDS = 60 * 60 * 48;
 const NORMAL_PHRASES = ['一切正常', '都正常', '正常', '没事', '没啥事', '没有', '没什么', '没问题', '还好', '挺好'];
 const AUDIT_QUESTIONS = [
   { topic: '顾客', question: '今天客流跟平时比，是偏忙、偏闲，还是差不多？' },
@@ -203,6 +204,18 @@ ${followUpEntryId ? '这次对话一开始是在追问她之前提到过、可�
   };
 
   await redis.lpush('entries', JSON.stringify(entry));
+  await redis.set(
+    `entry_transcript:${entry.id}`,
+    JSON.stringify({
+      entry_id: entry.id,
+      date: entry.date,
+      saved_at: new Date().toISOString(),
+      expires_in_seconds: TRANSCRIPT_TTL_SECONDS,
+      conv,
+      covered_topics: nextCoveredTopics,
+    }),
+    { ex: TRANSCRIPT_TTL_SECONDS }
+  );
 
   if (followUpEntryId && summary.resolved === true) {
     await markEntryResolved(followUpEntryId);

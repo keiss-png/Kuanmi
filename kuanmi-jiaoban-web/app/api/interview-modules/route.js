@@ -14,6 +14,7 @@ function mergeModules(state) {
       name: m.name,
       status: s.status || 'pending',
       last_session_date: s.last_session_date || null,
+      progress: s.progress || null,
       groups: m.groups,
     };
   });

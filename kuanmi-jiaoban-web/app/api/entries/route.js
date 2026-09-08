@@ -59,6 +59,10 @@ export async function PATCH(req) {
     issue_summary: updates.issue_summary ?? entry.issue_summary,
     raw_notes: updates.raw_notes ?? entry.raw_notes,
     severity: updates.severity ?? entry.severity,
+    resolved: updates.resolved ?? entry.resolved,
+    needs_follow_up: updates.needs_follow_up ?? entry.needs_follow_up,
+    follow_up_after_days: updates.follow_up_after_days ?? entry.follow_up_after_days,
+    tags: updates.tags ?? entry.tags,
   };
 
   await redis.lset('entries', index, JSON.stringify(updated));

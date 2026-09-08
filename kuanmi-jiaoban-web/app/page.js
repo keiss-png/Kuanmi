@@ -70,6 +70,8 @@ export default function MomPage() {
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const [followUpEntryId, setFollowUpEntryId] = useState(null);
+  const [followUpAction, setFollowUpAction] = useState('');
+  const [coveredTopics, setCoveredTopics] = useState([]);
   const [starting, setStarting] = useState(false);
   const today = useRef(todayInShanghai()).current;
 
@@ -134,6 +136,8 @@ export default function MomPage() {
       // 拿不到开场白就退回默认那句，不影响开始记录
     }
     setFollowUpEntryId(followUpId);
+    setFollowUpAction('');
+    setCoveredTopics([]);
     setConv([{ role: 'assistant', text: opener }]);
     setDone(false);
     setTurnCount(0);
@@ -158,7 +162,7 @@ export default function MomPage() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ key: accessKey, conv: newConv, turnCount: nextTurn, followUpEntryId }),
+        body: JSON.stringify({ key: accessKey, conv: newConv, turnCount: nextTurn, followUpEntryId, coveredTopics }),
       });
       if (res.status === 401) {
         setError('无权限，链接可能不对');
@@ -166,6 +170,9 @@ export default function MomPage() {
         return;
       }
       const data = await res.json();
+      if (Array.isArray(data.covered_topics)) {
+        setCoveredTopics(data.covered_topics);
+      }
       if (data.action === 'ask') {
         setConv([...newConv, { role: 'assistant', text: data.question }]);
       } else {
@@ -178,17 +185,52 @@ export default function MomPage() {
     setLoading(false);
   }
 
+  async function markFollowUp(updates, userText, assistantText) {
+    if (!followUpEntryId) return;
+    setFollowUpAction('saving');
+    setError('');
+    try {
+      const res = await fetch('/api/entries', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key: accessKey, id: followUpEntryId, updates }),
+      });
+      if (!res.ok) {
+        setError('保存旧问题状态失败，稍后再试一次');
+        setFollowUpAction('');
+        return;
+      }
+      setEntries((prev) => prev.map((e) => (e.id === followUpEntryId ? { ...e, ...updates } : e)));
+      setConv((prev) => [...prev, { role: 'user', text: userText }, { role: 'assistant', text: assistantText }]);
+      if (updates.resolved || updates.needs_follow_up === false) {
+        setFollowUpEntryId(null);
+      }
+      setFollowUpAction('saved');
+    } catch (e) {
+      setError('保存旧问题状态失败，稍后再试一次');
+      setFollowUpAction('');
+    }
+  }
+
   const interviewModule = interviewModules.find((m) => m.status === 'in_progress');
 
   function startInterview() {
     if (!interviewModule) return;
-    const firstGroup = interviewModule.groups[0];
-    setInterviewGroupIndex(0);
-    setInterviewTurnCount(0);
-    setInterviewGroupTurnCount(0);
-    setInterviewConv([
-      { role: 'assistant', text: `另外想跟你聊聊"${interviewModule.name}"。${firstGroup.questions[0]}` },
-    ]);
+    const progress = interviewModule.progress;
+    if (progress && Array.isArray(progress.conv) && progress.conv.length > 0) {
+      setInterviewGroupIndex(progress.groupIndex || 0);
+      setInterviewTurnCount(progress.turnCount || 0);
+      setInterviewGroupTurnCount(progress.groupTurnCount || 0);
+      setInterviewConv(progress.conv);
+    } else {
+      const firstGroup = interviewModule.groups[0];
+      setInterviewGroupIndex(0);
+      setInterviewTurnCount(0);
+      setInterviewGroupTurnCount(0);
+      setInterviewConv([
+        { role: 'assistant', text: `另外想跟你聊聊"${interviewModule.name}"。${firstGroup.questions[0]}` },
+      ]);
+    }
     setInterviewActive(true);
     setInterviewDone(false);
     setInterviewError('');
@@ -243,6 +285,12 @@ export default function MomPage() {
         setInterviewGroupTurnCount(0);
         const label = data.group ? `${data.group}。` : '';
         setInterviewConv([...newConv, { role: 'assistant', text: label + data.question }]);
+      } else if (data.action === 'paused') {
+        setInterviewActive(false);
+        setInterviewSkipped(true);
+        setInterviewModules((prev) =>
+          prev.map((m) => (m.id === interviewModule.id ? { ...m, progress: data.progress } : m))
+        );
       } else {
         setInterviewDone(true);
         setInterviewModules((prev) =>
@@ -278,7 +326,7 @@ export default function MomPage() {
       <div className="head">
         <div>
           <h1>宽米 · 交班本</h1>
-          <div className="sub">{today} · 每天几句话，不用填表</div>
+          <div className="sub">{today} · 每天复盘一点，慢慢把店跑清楚</div>
         </div>
       </div>
       <div className="bodyArea">
@@ -303,6 +351,44 @@ export default function MomPage() {
                 <div key={i} className={`bubble ${m.role === 'assistant' ? 'ai' : 'user'}`}>{m.text}</div>
               ))}
             </div>
+
+            {followUpEntryId && followUpAction !== 'saved' && (
+              <div className="quickActions">
+                <button
+                  className="plain"
+                  disabled={followUpAction === 'saving'}
+                  onClick={() => markFollowUp(
+                    { resolved: true, needs_follow_up: false },
+                    '这件事已经解决了。',
+                    '好，我记下这件事已经解决。那今天店里还有没有别的情况？'
+                  )}
+                >
+                  已解决
+                </button>
+                <button
+                  className="plain"
+                  disabled={followUpAction === 'saving'}
+                  onClick={() => markFollowUp(
+                    { resolved: false, needs_follow_up: true, follow_up_after_days: 1 },
+                    '还没解决。',
+                    '那我继续问细一点。现在卡住的主要是哪一步？'
+                  )}
+                >
+                  还没解决
+                </button>
+                <button
+                  className="plain"
+                  disabled={followUpAction === 'saving'}
+                  onClick={() => markFollowUp(
+                    { resolved: false, needs_follow_up: false },
+                    '这件事不用再提醒了。',
+                    '好，这件事我先不再提醒。那今天店里还有没有别的情况？'
+                  )}
+                >
+                  不用再问
+                </button>
+              </div>
+            )}
 
             {!done ? (
               <>

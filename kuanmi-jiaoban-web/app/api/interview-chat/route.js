@@ -2,8 +2,8 @@ import { redis } from '../../../lib/redis';
 import { callClaude, todayInShanghai } from '../../../lib/claude';
 import { SEED_MODULES } from '../../../lib/interviewModules';
 
-const MAX_GROUP_TURNS = 4; // 同一个子维度里最多问几轮就必须换维度
-const MAX_TOTAL_TURNS = 20; // 整场访谈的硬上限，防止跑飞
+const MAX_GROUP_TURNS = 6; // 同一个子维度里最多问几轮就必须换维度
+const MAX_TOTAL_TURNS = 30; // 整场访谈的硬上限，防止跑飞
 
 async function loadModuleState() {
   const raw = await redis.get('interview_modules');
@@ -46,15 +46,27 @@ export async function POST(req) {
       follow_up_count: turnCount || 0,
     };
     await redis.lpush('interview_sessions', JSON.stringify(session));
-    state[mod.id] = { status: 'done', last_session_date: date };
+    state[mod.id] = { status: 'done', last_session_date: date, progress: null };
     await redis.set('interview_modules', JSON.stringify(state));
     return session;
   }
 
   if (earlyExit) {
-    const userTexts = conv.filter((m) => m.role === 'user').map((m) => m.text);
-    const session = await finishSession(userTexts.join(' '));
-    return Response.json({ action: 'done', session });
+    const state = await loadModuleState();
+    const progress = {
+      conv,
+      groupIndex: groupIndex || 0,
+      turnCount: turnCount || 0,
+      groupTurnCount: groupTurnCount || 0,
+      paused_at: todayInShanghai(),
+    };
+    state[mod.id] = {
+      status: 'in_progress',
+      last_session_date: state[mod.id]?.last_session_date || null,
+      progress,
+    };
+    await redis.set('interview_modules', JSON.stringify(state));
+    return Response.json({ action: 'paused', progress });
   }
 
   const gIndex = Math.min(groupIndex || 0, mod.groups.length - 1);
@@ -68,11 +80,13 @@ export async function POST(req) {
 ${currentGroup.questions.map((q) => '- ' + q).join('\n')}
 
 你的任务：
-1. 结合她已经说的内容，判断这个方向是不是已经聊得差不多了（不用把上面每条都问一遍，抓到关键信息就够了，通常2-4个来回）。
-2. 如果还没问透，追问一个具体问题（可以从上面挑一条，也可以顺着她刚才的回答自然往下问），每次只问一个，问题要短。
-3. 如果这个方向已经聊得差不多，${isLastGroup ? '而且这是最后一个方向了，就直接结束整场访谈（action=done），并且用一段话总结一下她在这个环节说的内容（summary字段）。' : '就结束这个方向，进入下一个方向（action=next_group）。'}
-${forceNext && !isLastGroup ? '4. 这个方向已经聊了不少轮了，不管有没有问透，这次都必须结束这个方向、进入下一个（action=next_group）。' : ''}
-${forceFinish ? '5. 整场已经聊了很多轮了，不管当前方向问没问完，这次都必须直接结束整场访谈（action=done），并总结（summary字段）。' : ''}
+1. 目标不是简单寒暄，而是把她脑子里的真实运营规则挖出来：正常流程、谁负责、什么时候做、遇到例外怎么判断、出错怎么补救、哪些事只有她知道。
+2. 结合她已经说的内容，判断这个方向是不是已经问到可写 SOP 的程度。至少要尽量覆盖"正常流程 + 例外情况 + 决策标准/负责人"这三类信息。
+3. 如果还没问透，追问一个具体问题（可以从上面挑一条，也可以顺着她刚才的回答自然往下问），每次只问一个，问题要短。
+4. 如果她回答很笼统，不要马上换方向；追问一个例子、一次真实发生过的情况，或者问"当时你怎么判断的"。
+5. 如果这个方向已经聊得差不多，${isLastGroup ? '而且这是最后一个方向了，就直接结束整场访谈（action=done），并且用一段话总结一下她在这个环节说的内容（summary字段）。' : '就结束这个方向，进入下一个方向（action=next_group）。'}
+${forceNext && !isLastGroup ? '6. 这个方向已经聊了不少轮了，不管有没有问透，这次都必须结束这个方向、进入下一个（action=next_group）。' : ''}
+${forceFinish ? '7. 整场已经聊了很多轮了，不管当前方向问没问完，这次都必须直接结束整场访谈（action=done），并总结（summary字段）。' : ''}
 只输出严格的 JSON，不要有任何其他文字、不要markdown代码块标记：
 {"action":"ask","question":"..."} 或
 {"action":"next_group"} 或

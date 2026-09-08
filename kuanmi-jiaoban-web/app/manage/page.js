@@ -82,6 +82,7 @@ function ModuleRow({ m, sessions, onClick, expanded, onRequestDeleteSession, onC
         <div>
           <span className="name">{m.name}</span>
           {m.last_session_date && <span className="date">{m.last_session_date}</span>}
+          {m.progress && <span className="date">已暂停，可继续</span>}
         </div>
         <span className={`badge ${m.status}`}>{STATUS_LABEL[m.status]}</span>
       </div>
